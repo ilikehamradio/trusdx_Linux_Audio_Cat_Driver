@@ -7,6 +7,7 @@ cd "$ROOT"
 
 ARCH="${ARCH:-x86_64}"
 APP_NAME="trusdx_linux_driver"
+APP_SHORT="trusdx"
 REPO="${GITHUB_REPOSITORY:-ilikehamradio/trusdx_Linux_Audio_Cat_Driver}"
 REPO_OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
@@ -19,12 +20,13 @@ else
   VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 fi
 
-OUT_NAME="${APP_NAME}-${VERSION}-${ARCH}.AppImage"
+# Keep release asset names short for Gear Lever / downloads.
+OUT_NAME="${APP_SHORT}-${ARCH}.AppImage"
 # Gear Lever / AppImageUpdate channel:
 #   latest     — stable tagged releases (v*)
 #   continuous — rolling builds from master
 UPDATE_CHANNEL="${UPDATE_CHANNEL:-latest}"
-UPDATE_INFORMATION="gh-releases-zsync|${REPO_OWNER}|${REPO_NAME}|${UPDATE_CHANNEL}|${APP_NAME}-*-${ARCH}.AppImage.zsync"
+UPDATE_INFORMATION="gh-releases-zsync|${REPO_OWNER}|${REPO_NAME}|${UPDATE_CHANNEL}|${APP_SHORT}-${ARCH}.AppImage.zsync"
 
 DIST_DIR="${ROOT}/dist"
 APPDIR="${DIST_DIR}/AppDir"

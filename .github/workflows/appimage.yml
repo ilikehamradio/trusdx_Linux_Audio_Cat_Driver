@@ -98,10 +98,10 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: trusdx_linux_driver-${{ steps.meta.outputs.version }}-x86_64
+          name: trusdx-${{ steps.meta.outputs.version }}-x86_64
           path: |
-            dist/trusdx_linux_driver-*-x86_64.AppImage
-            dist/trusdx_linux_driver-*-x86_64.AppImage.zsync
+            dist/trusdx-x86_64.AppImage
+            dist/trusdx-x86_64.AppImage.zsync
           if-no-files-found: error
 
       - name: Publish GitHub Release
@@ -118,8 +118,8 @@ jobs:
             Gear Lever / AppImageUpdate channel: `${{ steps.meta.outputs.channel }}`
             Embedded update info uses `gh-releases-zsync` against this release's `.zsync` asset.
           files: |
-            dist/trusdx_linux_driver-*-x86_64.AppImage
-            dist/trusdx_linux_driver-*-x86_64.AppImage.zsync
+            dist/trusdx-x86_64.AppImage
+            dist/trusdx-x86_64.AppImage.zsync
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
