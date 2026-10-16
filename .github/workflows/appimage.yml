@@ -65,11 +65,12 @@ jobs:
             RELEASE_NAME="${GITHUB_REF_NAME}"
           else
             # Rolling build for master / manual runs — Gear Lever channel "continuous"
+            # Also mark as GitHub "Latest" so the Releases page shows this build, not an old tag.
             VERSION="continuous"
             CHANNEL="continuous"
             TAG="continuous"
-            PRERELEASE="true"
-            MAKE_LATEST="false"
+            PRERELEASE="false"
+            MAKE_LATEST="true"
             RELEASE_NAME="Continuous build"
           fi
           {
