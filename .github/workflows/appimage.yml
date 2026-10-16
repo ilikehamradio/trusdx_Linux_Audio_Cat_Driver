@@ -1,19 +1,21 @@
 # Build an x86_64 AppImage with Gear Lever–compatible gh-releases-zsync update info.
+#
 # Triggers:
-#   - push of version tags (v1.2.3) → GitHub Release with AppImage + .zsync
-#   - workflow_dispatch → same, using Cargo.toml version (or input)
+#   - push to master → update the rolling "continuous" release (auto on code changes)
+#   - push of version tags (v1.2.3) → stable GitHub Release (channel: latest)
+#   - workflow_dispatch → continuous release (or tagged if you push a tag)
 name: AppImage
 
 on:
   push:
+    branches:
+      - master
     tags:
       - "v*"
+    paths-ignore:
+      - "README.md"
+      - "images/**"
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version string (empty = Cargo.toml / tag)"
-        required: false
-        default: ""
 
 permissions:
   contents: write
@@ -51,25 +53,42 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Resolve version
-        id: ver
+      - name: Resolve release metadata
+        id: meta
         run: |
-          if [[ -n "${{ github.event.inputs.version }}" ]]; then
-            V="${{ github.event.inputs.version }}"
-          elif [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
-            V="${GITHUB_REF_NAME#v}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            CHANNEL="latest"
+            TAG="${GITHUB_REF_NAME}"
+            PRERELEASE="false"
+            MAKE_LATEST="true"
+            RELEASE_NAME="${GITHUB_REF_NAME}"
           else
-            V="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+            # Rolling build for master / manual runs — Gear Lever channel "continuous"
+            VERSION="continuous"
+            CHANNEL="continuous"
+            TAG="continuous"
+            PRERELEASE="true"
+            MAKE_LATEST="false"
+            RELEASE_NAME="Continuous build"
           fi
-          echo "version=${V}" >> "$GITHUB_OUTPUT"
-          echo "Building version ${V}"
+          {
+            echo "version=${VERSION}"
+            echo "channel=${CHANNEL}"
+            echo "tag=${TAG}"
+            echo "prerelease=${PRERELEASE}"
+            echo "make_latest=${MAKE_LATEST}"
+            echo "release_name=${RELEASE_NAME}"
+          } >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION} channel=${CHANNEL} tag=${TAG}"
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
       - name: Build AppImage
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          UPDATE_CHANNEL: ${{ steps.meta.outputs.channel }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           chmod +x packaging/build-appimage.sh
@@ -78,19 +97,25 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: trusdx_linux_driver-${{ steps.ver.outputs.version }}-x86_64
+          name: trusdx_linux_driver-${{ steps.meta.outputs.version }}-x86_64
           path: |
             dist/trusdx_linux_driver-*-x86_64.AppImage
             dist/trusdx_linux_driver-*-x86_64.AppImage.zsync
           if-no-files-found: error
 
-      - name: Create / update GitHub Release
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          # Tag pushes use the pushed tag; manual runs create/update v$VERSION.
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.ver.outputs.version) }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.ver.outputs.version) }}
-          generate_release_notes: true
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.release_name }}
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          make_latest: ${{ steps.meta.outputs.make_latest }}
+          generate_release_notes: ${{ steps.meta.outputs.channel == 'latest' }}
+          body: |
+            Automated AppImage build from `${{ github.sha }}` on `${{ github.ref_name }}`.
+
+            Gear Lever / AppImageUpdate channel: `${{ steps.meta.outputs.channel }}`
+            Embedded update info uses `gh-releases-zsync` against this release's `.zsync` asset.
           files: |
             dist/trusdx_linux_driver-*-x86_64.AppImage
             dist/trusdx_linux_driver-*-x86_64.AppImage.zsync

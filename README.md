@@ -62,7 +62,12 @@ Seamless integration with fldigi and other hamlib-compatible software via rigctl
 2. Make it executable: `chmod +x trusdx_linux_driver-*-x86_64.AppImage`
 3. Run it directly, or manage it with [Gear Lever](https://github.com/mijorus/gearlever) (updates via embedded `gh-releases-zsync`)
 
-CI builds AppImages on version tags (`v*`). Each release publishes both the `.AppImage` and matching `.zsync` so Gear Lever / AppImageUpdate can delta-update.
+CI builds AppImages automatically:
+
+- **Every push to `master`** → rolling [continuous](https://github.com/ilikehamradio/trusdx_Linux_Audio_Cat_Driver/releases/tag/continuous) release (Gear Lever channel `continuous`)
+- **Version tags (`v*`)** → stable release (channel `latest`)
+
+Each release publishes both the `.AppImage` and matching `.zsync` for delta updates.
 
 ### From Source
 

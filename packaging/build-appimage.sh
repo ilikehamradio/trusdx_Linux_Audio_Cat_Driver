@@ -20,8 +20,11 @@ else
 fi
 
 OUT_NAME="${APP_NAME}-${VERSION}-${ARCH}.AppImage"
-# Gear Lever / AppImageUpdate: match assets on the latest GitHub Release via zsync.
-UPDATE_INFORMATION="gh-releases-zsync|${REPO_OWNER}|${REPO_NAME}|latest|${APP_NAME}-*-${ARCH}.AppImage.zsync"
+# Gear Lever / AppImageUpdate channel:
+#   latest     — stable tagged releases (v*)
+#   continuous — rolling builds from master
+UPDATE_CHANNEL="${UPDATE_CHANNEL:-latest}"
+UPDATE_INFORMATION="gh-releases-zsync|${REPO_OWNER}|${REPO_NAME}|${UPDATE_CHANNEL}|${APP_NAME}-*-${ARCH}.AppImage.zsync"
 
 DIST_DIR="${ROOT}/dist"
 APPDIR="${DIST_DIR}/AppDir"
