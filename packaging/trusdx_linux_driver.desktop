@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=trUSDX Linux Audio Driver
+Comment=PulseAudio / CAT bridge for the trUSDX QRP transceiver
+Exec=trusdx_linux_driver
+Icon=trusdx_linux_driver
+Categories=AudioVideo;HamRadio;Utility;
+Terminal=false
+StartupNotify=true
+Keywords=ham;radio;cat;trusdx;ft8;

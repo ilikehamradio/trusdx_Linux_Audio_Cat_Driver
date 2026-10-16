@@ -1,0 +1,99 @@
+# Build an x86_64 AppImage with Gear Lever–compatible gh-releases-zsync update info.
+# Triggers:
+#   - push of version tags (v1.2.3) → GitHub Release with AppImage + .zsync
+#   - workflow_dispatch → same, using Cargo.toml version (or input)
+name: AppImage
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string (empty = Cargo.toml / tag)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build AppImage (x86_64)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            curl \
+            ca-certificates \
+            zsync \
+            libpulse-dev \
+            libudev-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libxkbcommon-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libwayland-dev \
+            libegl1-mesa-dev \
+            libgl1-mesa-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ -n "${{ github.event.inputs.version }}" ]]; then
+            V="${{ github.event.inputs.version }}"
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          fi
+          echo "version=${V}" >> "$GITHUB_OUTPUT"
+          echo "Building version ${V}"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build AppImage
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          chmod +x packaging/build-appimage.sh
+          ./packaging/build-appimage.sh
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trusdx_linux_driver-${{ steps.ver.outputs.version }}-x86_64
+          path: |
+            dist/trusdx_linux_driver-*-x86_64.AppImage
+            dist/trusdx_linux_driver-*-x86_64.AppImage.zsync
+          if-no-files-found: error
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Tag pushes use the pushed tag; manual runs create/update v$VERSION.
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.ver.outputs.version) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.ver.outputs.version) }}
+          generate_release_notes: true
+          files: |
+            dist/trusdx_linux_driver-*-x86_64.AppImage
+            dist/trusdx_linux_driver-*-x86_64.AppImage.zsync
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
