@@ -1,0 +1,36 @@
+// Status-notifier tray entry. Keeps the app alive when the main window is hidden.
+export component AppTray inherits SystemTrayIcon {
+    icon: @image-url("../icon.png");
+    // Updated from Rust each UI tick (TX / RX / FREQ on separate lines).
+    tooltip: "RX: 0.0%\nTX: 0.0%\nFREQ: 0.00000 MHz";
+    title: "trUSDX";
+
+    // Aliases so Rust gets set_* accessors (same pattern as Slint's system_tray example).
+    in-out property <string> tray-tooltip <=> root.tooltip;
+    in-out property <string> tray-title <=> root.title;
+    in-out property <bool> tray-visible <=> root.visible;
+
+    callback toggle-window();
+    callback quit();
+
+    // Platform left-click when the shell delivers it (Linux StatusNotifier).
+    clicked => {
+        toggle-window();
+    }
+
+    Menu {
+        MenuItem {
+            title: "Show window";
+            activated => {
+                toggle-window();
+            }
+        }
+        MenuSeparator {}
+        MenuItem {
+            title: "Quit";
+            activated => {
+                quit();
+            }
+        }
+    }
+}

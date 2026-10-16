@@ -1,153 +1,176 @@
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
-use std::thread;
+//! Slint GUI + system tray (start hidden; close hides to tray).
+
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use gtk::prelude::*;
-use gtk::{Builder, Label, ProgressBar, Window};
+use slint::{CloseRequestResponse, ComponentHandle, Timer, TimerMode};
+use tracing::{error, info, warn};
 
-const GLADE_UI: &str = include_str!("gui.glade");
+use crate::shutdown;
+use crate::state::AppState;
 
-pub fn load_glade_file() -> Result<Builder, String> {
-    Ok(Builder::from_string(GLADE_UI))
+slint::include_modules!();
+
+/// Hover text for the system tray icon (TX / RX / FREQ, one per line).
+pub fn format_tray_tooltip(tx_level: f32, rx_level: f32, freq_hz: u64) -> String {
+    let tx_pct = tx_level.clamp(0.0, 1.0) * 100.0;
+    let rx_pct = rx_level.clamp(0.0, 1.0) * 100.0;
+    let freq_mhz = (freq_hz as f64) / 1_000_000.0;
+    format!(
+        "RX: {:.1}%\nTX: {:.1}%\nFREQ: {:.5} MHz",
+        rx_pct, tx_pct, freq_mhz
+    )
 }
 
-pub fn setup_gui(
-    input_level: Arc<Mutex<f32>>,
-    output_level: Arc<Mutex<f32>>,
-    shutting_down: Arc<AtomicBool>,
+/// Run the Slint UI on the calling thread (process main thread).
+///
+/// Starts minimized to the system tray. Closing the window hides it; use the
+/// tray menu (or left-click) to restore, or Quit to shut down fully.
+pub fn run_gui(
+    state: Arc<AppState>,
     ser: Arc<Mutex<Box<dyn serialport::SerialPort + Send>>>,
-    stop_audio: Arc<Mutex<bool>>,
-    freq_state: Arc<Mutex<u64>>,
-    mode_state: Arc<Mutex<String>>,
-    tx_state: Arc<Mutex<bool>>,
 ) -> Result<(), String> {
     let display = std::env::var("DISPLAY").ok();
     let wayland = std::env::var("WAYLAND_DISPLAY").ok();
-    
-    // Check if neither X11 nor Wayland display is available
     if display.is_none() && wayland.is_none() {
-        return Err("Neither DISPLAY nor WAYLAND_DISPLAY environment variables are set. Cannot initialize GUI.".to_string());
-    }
-    
-    gtk::init().map_err(|e| format!("Failed to initialize GTK: {:?}", e))?;
-    
-    let builder = load_glade_file()?;
-    
-    let window: Window = builder
-        .object("window")
-        .ok_or("Could not find window object in glade file")?;
-    
-    let prog_tx_level: ProgressBar = builder
-        .object("prog_tx_level")
-        .ok_or("Could not find prog_tx_level progress bar")?;
-    
-    let prog_rx_level: ProgressBar = builder
-        .object("prog_rx_level")
-        .ok_or("Could not find prog_rx_level progress bar")?;
-    
-    let lbl_freq: Label = builder
-        .object("lblFreq")
-        .ok_or("Could not find lblFreq label in glade file")?;
-    
-    let lbl_mode: Label = builder
-        .object("lblMode")
-        .ok_or("Could not find lblMode label in glade file")?;
-    
-    let lbl_state: Label = builder
-        .object("lblState")
-        .ok_or("Could not find lblState label in glade file")?;
-    
-    prog_tx_level.set_show_text(true);
-    prog_rx_level.set_show_text(true);
-    
-    window.set_resizable(false);
-    
-    let shutting_down_clone = shutting_down.clone();
-    let stop_audio_clone = stop_audio.clone();
-    let ser_clone = ser.clone();
-    window.connect_delete_event(move |_, _| {
-        crate::shutdown::shutdown(
-            shutting_down_clone.clone(),
-            ser_clone.clone(),
-            stop_audio_clone.clone(),
+        return Err(
+            "Neither DISPLAY nor WAYLAND_DISPLAY is set. Cannot initialize GUI.".to_string(),
         );
-        gtk::main_quit();
-        gtk::glib::Propagation::Stop
-    });
-    
-    window.show_all();
-    
-    let shutting_down_for_timeout = shutting_down.clone();
-    let input_level_for_timeout = input_level.clone();
-    let output_level_for_timeout = output_level.clone();
-    let freq_state_for_timeout = freq_state.clone();
-    let mode_state_for_timeout = mode_state.clone();
-    let tx_state_for_timeout = tx_state.clone();
-    let prog_tx_for_timeout = prog_tx_level.clone();
-    let prog_rx_for_timeout = prog_rx_level.clone();
-    let lbl_freq_for_timeout = lbl_freq.clone();
-    let lbl_mode_for_timeout = lbl_mode.clone();
-    let lbl_state_for_timeout = lbl_state.clone();
-    
-    let _ = glib::timeout_add_local(Duration::from_millis(50), move || {
-        // Check if shutdown flag is set
-        if shutting_down_for_timeout.load(Ordering::Relaxed) {
-            return glib::ControlFlow::Break;
+    }
+
+    let ui = MainWindow::new().map_err(|e| format!("Failed to create Slint window: {e}"))?;
+    let tray = AppTray::new().map_err(|e| format!("Failed to create system tray icon: {e}"))?;
+
+    tray.set_tray_tooltip(format_tray_tooltip(0.0, 0.0, 0).into());
+    tray.set_tray_title("trUSDX".into());
+    tray.set_tray_visible(true);
+
+    // Close → hide to tray (driver keeps running). Match Slint's HideWindow semantics.
+    ui.window().on_close_requested(|| CloseRequestResponse::HideWindow);
+
+    // Tray toggle / show — same pattern as Slint examples/system_tray.
+    let ui_toggle = ui.as_weak();
+    tray.on_toggle_window(move || {
+        let Some(w) = ui_toggle.upgrade() else {
+            warn!("tray toggle: main window handle gone");
+            return;
+        };
+        if w.window().is_visible() {
+            if let Err(e) = w.hide() {
+                warn!(error = %e, "tray: hide failed");
+            }
+        } else if let Err(e) = w.show() {
+            warn!(error = %e, "tray: show failed");
         }
-        
-        let in_lvl = *input_level_for_timeout.lock().unwrap();
-        let out_lvl = *output_level_for_timeout.lock().unwrap();
-        
-        prog_rx_for_timeout.set_fraction(in_lvl.clamp(0.0, 1.0) as f64);
-        let rx_text = format!("{:.1}%", in_lvl * 100.0);
-        prog_rx_for_timeout.set_text(Some(&rx_text));
-        
-        prog_tx_for_timeout.set_fraction(out_lvl.clamp(0.0, 1.0) as f64);
-        let tx_text = format!("{:.1}%", out_lvl * 100.0);
-        prog_tx_for_timeout.set_text(Some(&tx_text));
-        
-        let freq = *freq_state_for_timeout.lock().unwrap();
-        let mode = mode_state_for_timeout.lock().unwrap().clone();
-        let tx_now = *tx_state_for_timeout.lock().unwrap();
-        let freq_mhz = (freq as f64) / 1_000_000.0f64;
-        let freq_text = format!("{:.5} MHz", freq_mhz);
-        lbl_freq_for_timeout.set_text(&freq_text);
-        lbl_mode_for_timeout.set_text(&mode);
-        let state_text = if tx_now { "TX" } else { "RX" };
-        lbl_state_for_timeout.set_text(state_text);
-        
-        glib::ControlFlow::Continue
     });
-    
-    gtk::main();
-    
+
+    let state_quit = state.clone();
+    let ser_quit = ser.clone();
+    tray.on_quit(move || {
+        shutdown::shutdown(state_quit.clone(), ser_quit.clone());
+        let _ = slint::quit_event_loop();
+    });
+
+    let ui_weak = ui.as_weak();
+    let tray_weak = tray.as_weak();
+    let state_tick = state.clone();
+    let timer = Timer::default();
+    timer.start(TimerMode::Repeated, Duration::from_millis(50), move || {
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
+
+        if state_tick.shutting_down.load(Ordering::Relaxed) {
+            let _ = ui.hide();
+            let _ = slint::quit_event_loop();
+            return;
+        }
+
+        let in_lvl = state_tick.input_level().clamp(0.0, 1.0);
+        let out_lvl = state_tick.output_level().clamp(0.0, 1.0);
+        ui.set_rx_level(in_lvl);
+        ui.set_rx_text(format!("{:.1}%", in_lvl * 100.0).into());
+        ui.set_tx_level(out_lvl);
+        ui.set_tx_text(format!("{:.1}%", out_lvl * 100.0).into());
+
+        let freq = state_tick.freq_hz.load(Ordering::Relaxed);
+        let freq_mhz = (freq as f64) / 1_000_000.0f64;
+        ui.set_freq_text(format!("{:.5} MHz", freq_mhz).into());
+        ui.set_mode_text(state_tick.mode().as_str().into());
+        ui.set_state_text(if state_tick.tx.load(Ordering::Relaxed) {
+            "TX".into()
+        } else {
+            "RX".into()
+        });
+
+        if let Some(tray) = tray_weak.upgrade() {
+            tray.set_tray_tooltip(format_tray_tooltip(out_lvl, in_lvl, freq).into());
+        }
+    });
+
+    let _timer = timer;
+
+    // Create the native window, then hide on the next event-loop tick so we
+    // start in the tray without racing show/hide before the loop runs.
+    if let Err(e) = ui.show() {
+        return Err(format!("Failed to show main window: {e}"));
+    }
+    let ui_start_hide = ui.as_weak();
+    Timer::single_shot(Duration::from_millis(50), move || {
+        if let Some(w) = ui_start_hide.upgrade() {
+            let _ = w.hide();
+            info!("window hidden — use tray to show / quit");
+        }
+    });
+
+    // Keep tray alive for the lifetime of the event loop.
+    let _tray = tray;
+
+    if let Err(e) = slint::run_event_loop() {
+        error!(error = %e, "Slint event loop failed");
+        return Err(format!("Slint run failed: {e}"));
+    }
+
+    if !state.shutting_down.load(Ordering::Relaxed) {
+        warn!("GUI event loop exited without shutdown flag; requesting shutdown");
+        shutdown::shutdown(state, ser);
+    }
+
     Ok(())
 }
 
-pub fn spawn_gui(
-    input_level: Arc<Mutex<f32>>,
-    output_level: Arc<Mutex<f32>>,
-    shutting_down: Arc<AtomicBool>,
-    ser: Arc<Mutex<Box<dyn serialport::SerialPort + Send>>>,
-    stop_audio: Arc<Mutex<bool>>,
-    freq_state: Arc<Mutex<u64>>,
-    mode_state: Arc<Mutex<String>>,
-    tx_state: Arc<Mutex<bool>>,
-) {
-    thread::spawn(move || {
-        // Check if GUI setup failed
-        if let Err(e) = setup_gui(
-            input_level,
-            output_level,
-            shutting_down,
-            ser,
-            stop_audio,
-            freq_state,
-            mode_state,
-            tx_state,
-        ) {
-            eprintln!("GUI error: {}", e);
-        }
-    });
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn format_tray_tooltip_separate_lines() {
+        // Arrange
+        let tx = 0.125;
+        let rx = 0.202;
+        let freq_hz = 14_074_000u64;
+
+        // Act
+        let tip = format_tray_tooltip(tx, rx, freq_hz);
+
+        // Assert
+        let lines: Vec<&str> = tip.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "RX: 20.2%");
+        assert_eq!(lines[1], "TX: 12.5%");
+        assert_eq!(lines[2], "FREQ: 14.07400 MHz");
+    }
+
+    #[test]
+    fn format_tray_tooltip_clamps_levels() {
+        // Arrange / Act
+        let tip = format_tray_tooltip(2.0, -0.5, 0);
+
+        // Assert
+        let lines: Vec<&str> = tip.lines().collect();
+        assert_eq!(lines[0], "RX: 0.0%");
+        assert_eq!(lines[1], "TX: 100.0%");
+        assert_eq!(lines[2], "FREQ: 0.00000 MHz");
+    }
+}

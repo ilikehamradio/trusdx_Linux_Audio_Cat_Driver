@@ -1,0 +1,27 @@
+{
+  "src/cli.rs": ["src/cli.rs"],
+  "src/cat_codec.rs": ["src/cat_codec.rs"],
+  "src/state.rs": ["src/state.rs"],
+  "src/rigctl.rs": ["src/rigctl.rs"],
+  "src/trusdx.rs": ["src/trusdx.rs"],
+  "src/serial_io.rs": ["src/serial_io.rs"],
+  "src/audio.rs": ["src/audio.rs", "src/serial_io.rs", "src/cat_codec.rs"],
+  "src/shutdown.rs": ["src/state.rs"],
+  "src/gui.rs": ["src/gui.rs", "src/state.rs"],
+  "src/lib.rs": [
+    "src/cli.rs",
+    "src/cat_codec.rs",
+    "src/state.rs",
+    "src/rigctl.rs",
+    "src/serial_io.rs"
+  ],
+  "src/main.rs": [
+    "src/cli.rs",
+    "src/cat_codec.rs",
+    "src/state.rs",
+    "src/rigctl.rs",
+    "src/serial_io.rs"
+  ],
+  "ui/app-window.slint": ["src/gui.rs"],
+  "ui/tray.slint": ["src/gui.rs"]
+}

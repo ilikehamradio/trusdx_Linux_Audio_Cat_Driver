@@ -1,19 +1,25 @@
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
-use serialport;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
+
+use tracing::{error, warn};
+
+use crate::state::AppState;
 
 pub fn shutdown(
-    shutting_down: Arc<AtomicBool>,
+    state: Arc<AppState>,
     ser: Arc<Mutex<Box<dyn serialport::SerialPort + Send>>>,
-    stop_audio: Arc<Mutex<bool>>,
 ) {
-    shutting_down.store(true, Ordering::Relaxed);
-    
-    *stop_audio.lock().unwrap() = true;
-    
-    // Check if serial port lock acquired successfully
+    state.shutting_down.store(true, Ordering::Relaxed);
+    state.stop_audio.store(true, Ordering::Relaxed);
+
     if let Ok(mut s) = ser.lock() {
-        let _ = crate::trusdx::enable_streaming_speaker_on(&mut **s);
-        let _ = s.flush();
+        if let Err(e) = crate::trusdx::enable_streaming_speaker_on(&mut **s) {
+            warn!(error = %e, "shutdown: restore speaker streaming failed");
+        }
+        if let Err(e) = s.flush() {
+            warn!(error = %e, "shutdown: serial flush failed");
+        }
+    } else {
+        error!("shutdown: could not lock serial port");
     }
 }
-

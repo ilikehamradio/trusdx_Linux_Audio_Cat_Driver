@@ -1,0 +1,106 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug trusdx_linux_driver",
+      "cargo": {
+        "args": ["build", "--bin=trusdx_linux_driver", "--package=trusdx_linux_driver"],
+        "filter": {
+          "name": "trusdx_linux_driver",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "terminal": "integrated",
+      "env": {
+        "RUST_BACKTRACE": "1"
+      },
+      "preRunCommands": [
+        "process handle SIGTTOU -n true -p true -s false",
+        "process handle SIGTTIN -n true -p true -s false",
+        "process handle SIGCHLD -n true -p true -s false"
+      ],
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug trusdx_linux_driver (release)",
+      "cargo": {
+        "args": [
+          "build",
+          "--release",
+          "--bin=trusdx_linux_driver",
+          "--package=trusdx_linux_driver"
+        ],
+        "filter": {
+          "name": "trusdx_linux_driver",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "terminal": "integrated",
+      "env": {
+        "RUST_BACKTRACE": "1"
+      },
+      "preRunCommands": [
+        "process handle SIGTTOU -n true -p true -s false",
+        "process handle SIGTTIN -n true -p true -s false",
+        "process handle SIGCHLD -n true -p true -s false"
+      ],
+      "preLaunchTask": "cargo build --release"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Run All Tests (Verbose)",
+      "cargo": {
+        "args": ["test", "--no-run", "--package=trusdx_linux_driver", "--lib"],
+        "filter": {
+          "name": "trusdx_linux_driver",
+          "kind": "lib"
+        }
+      },
+      "args": ["--nocapture", "--test-threads=1"],
+      "cwd": "${workspaceFolder}",
+      "terminal": "integrated",
+      "env": {
+        "RUST_BACKTRACE": "full",
+        "RUST_LOG": "debug"
+      },
+      "preRunCommands": [
+        "process handle SIGTTOU -n true -p true -s false",
+        "process handle SIGTTIN -n true -p true -s false",
+        "process handle SIGCHLD -n true -p true -s false"
+      ],
+      "preLaunchTask": "cargo test -- --nocapture"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests",
+      "cargo": {
+        "args": ["test", "--no-run", "--package=trusdx_linux_driver", "--lib"],
+        "filter": {
+          "name": "trusdx_linux_driver",
+          "kind": "lib"
+        }
+      },
+      "args": ["--nocapture"],
+      "cwd": "${workspaceFolder}",
+      "terminal": "integrated",
+      "env": {
+        "RUST_BACKTRACE": "1"
+      },
+      "preRunCommands": [
+        "process handle SIGTTOU -n true -p true -s false",
+        "process handle SIGTTIN -n true -p true -s false",
+        "process handle SIGCHLD -n true -p true -s false"
+      ]
+    }
+  ]
+}

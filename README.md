@@ -27,7 +27,7 @@ The command-line interface provides real-time monitoring of audio levels, freque
 
 ![GUI Interface](images/gui.png)
 
-The GTK-based graphical interface displays audio level meters and radio status in a user-friendly window.
+The Slint-based graphical interface displays audio level meters and radio status in a user-friendly window.
 
 ### Audio Control
 
@@ -51,7 +51,7 @@ Seamless integration with fldigi and other hamlib-compatible software via rigctl
 
 - Linux system with PulseAudio
 - trUSDX radio connected via USB serial port
-- GTK 3.24+ (for GUI)
+- A display server for the Slint GUI (X11 or Wayland), or use `--no-gui`
 - Appropriate permissions to access serial port (usually requires adding user to `dialout` group)
 
 ## Installation
@@ -66,9 +66,9 @@ Seamless integration with fldigi and other hamlib-compatible software via rigctl
 
 1. Install Rust toolchain: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 2. Install system dependencies:
-   - Debian/Ubuntu: `sudo apt-get install libpulse-dev libgtk-3-dev libudev-dev`
-   - Arch: `sudo pacman -S pulseaudio gtk3 libudev`
-   - Fedora: `sudo dnf install pulseaudio-devel gtk3-devel systemd-devel`
+   - Debian/Ubuntu: `sudo apt-get install libpulse-dev libudev-dev pkg-config libfontconfig1-dev`
+   - Arch: `sudo pacman -S pulseaudio libudev fontconfig`
+   - Fedora: `sudo dnf install pulseaudio-devel systemd-devel fontconfig-devel`
 3. Clone the repository: `git clone <repository-url>`
 4. Build: `cargo build --release`
 5. Run: `./target/release/trusdx_linux_driver`
@@ -77,22 +77,19 @@ Seamless integration with fldigi and other hamlib-compatible software via rigctl
 
 ### Command Line Interface
 
-The application starts with a CLI interface showing:
-- Real-time audio levels (RX/TX)
-- Current frequency and mode
-- Transmit state
-- RTS line status
+```bash
+./target/release/trusdx_linux_driver --no-gui
+./target/release/trusdx_linux_driver --device /dev/ttyUSB0
+./target/release/trusdx_linux_driver --help
+```
 
-Press `ESC` to gracefully shutdown the application.
+The CLI shows real-time audio levels (RX/TX), frequency, mode, transmit state, and RTS. Press `ESC` or `Ctrl-C` to shut down.
 
 ### Graphical Interface
 
-A GTK-based GUI window displays:
-- RX and TX audio level meters
-- Current frequency, mode, and state
-- RTS line status
+By default the app starts in the **system tray** (no CLI level meters in that mode). Use the tray icon (click or “Show window”) to open the Slint meters UI; closing the window hides it back to the tray. Choose **Quit** from the tray menu (or press `ESC` / `Ctrl-C` in the terminal) for a full shutdown. Use `--no-gui` for terminal meters only.
 
-Close the window to exit the application.
+On Linux you need a StatusNotifier/AppIndicator host (KDE/XFCE usually work; GNOME often needs an extension).
 
 ### rigctl Integration
 
@@ -119,10 +116,11 @@ The AppImage will be generated in `target/appimage/`.
 
 ## Technical Details
 
-- **Audio Format**: 8 kHz sample rate, 16-bit PCM
-- **Serial Protocol**: CAT commands over USB serial
+- **Audio Format**: RX ~7812 Hz (f32 Pulse playback), TX 11520 Hz (s16 record → 8-bit CAT stream)
+- **Pulse null-sink**: Created at the TX rate (`rate=11520`) as `TRUSDX` / `TRUSDX.monitor`
+- **Serial Protocol**: CAT commands over USB serial (CH340 1a86:7523, or `--device`)
 - **rigctl Port**: 127.0.0.1:4532
-- **Threading**: Multi-threaded architecture for concurrent audio processing and control
+- **Threading**: Audio bridge drains outbound serial control; a status poller sends `;FA;`/`;MD;` (leading `;` interrupts US audio) at launch and every ~2s in RX; Slint GUI runs on the main thread when enabled
 
 ## Troubleshooting
 

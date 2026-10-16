@@ -1,0 +1,154 @@
+// Layout mirrors the former GTK/Glade UI:
+// title bar, RX/TX framed meters, then Freq / Mode / State frames.
+
+export { AppTray } from "tray.slint";
+
+
+component LevelMeter inherits Rectangle {
+    in property <float> level;
+    in property <string> caption;
+    height: 36px;
+    border-radius: 3px;
+    background: #deddda;
+    clip: true;
+    horizontal-stretch: 1;
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        height: 100%;
+        width: parent.width * min(1.0, max(0.0, root.level));
+        background: #3584e4;
+    }
+
+    Text {
+        width: 100%;
+        height: 100%;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        text: root.caption;
+        color: #241f31;
+        font-size: 12px;
+    }
+}
+
+component LabeledPanel inherits VerticalLayout {
+    in property <string> title;
+    spacing: 4px;
+    padding: 0;
+    vertical-stretch: 0;
+
+    Text {
+        text: root.title;
+        font-size: 11px;
+        color: #5e5c64;
+        horizontal-alignment: left;
+        vertical-stretch: 0;
+    }
+
+    Rectangle {
+        border-width: 1px;
+        border-color: #c0bfbc;
+        border-radius: 4px;
+        background: transparent;
+        vertical-stretch: 0;
+        horizontal-stretch: 1;
+
+        VerticalLayout {
+            padding: 10px;
+            spacing: 0;
+            vertical-stretch: 0;
+            @children
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "trUSDX Linux Audio Driver";
+    preferred-width: 500px;
+    // Tall enough for RX + TX meters + Freq/Mode/State row + padding (was clipping at 240).
+    preferred-height: 320px;
+    min-width: 500px;
+    max-width: 500px;
+    min-height: 320px;
+    max-height: 320px;
+    background: #fafafa;
+
+    in-out property <float> rx-level: 0.0;
+    in-out property <string> rx-text: "0.0%";
+    in-out property <float> tx-level: 0.0;
+    in-out property <string> tx-text: "0.0%";
+    in-out property <string> freq-text: "0.00000 MHz";
+    in-out property <string> mode-text: "USB";
+    in-out property <string> state-text: "RX";
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 12px;
+        vertical-stretch: 0;
+
+        LabeledPanel {
+            title: "RX";
+            LevelMeter {
+                level: root.rx-level;
+                caption: root.rx-text;
+            }
+        }
+
+        LabeledPanel {
+            title: "TX";
+            LevelMeter {
+                level: root.tx-level;
+                caption: root.tx-text;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            padding: 0;
+            vertical-stretch: 0;
+
+            LabeledPanel {
+                title: "Freq";
+                horizontal-stretch: 1;
+                Text {
+                    text: root.freq-text;
+                    font-size: 13px;
+                    color: #241f31;
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    min-height: 28px;
+                    vertical-stretch: 0;
+                }
+            }
+
+            LabeledPanel {
+                title: "Mode";
+                horizontal-stretch: 1;
+                Text {
+                    text: root.mode-text;
+                    font-size: 13px;
+                    color: #241f31;
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    min-height: 28px;
+                    vertical-stretch: 0;
+                }
+            }
+
+            LabeledPanel {
+                title: "State";
+                horizontal-stretch: 1;
+                Text {
+                    text: root.state-text;
+                    font-size: 13px;
+                    color: #241f31;
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    min-height: 28px;
+                    vertical-stretch: 0;
+                }
+            }
+        }
+    }
+}

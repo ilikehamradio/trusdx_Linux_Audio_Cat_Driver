@@ -2,18 +2,28 @@
 name = "trusdx_linux_driver"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
+
+[lib]
+name = "trusdx_linux_driver"
+path = "src/lib.rs"
+
+[[bin]]
+name = "trusdx_linux_driver"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0"
 serialport = "4.3"
 libpulse-binding = "2.28.1"
 libpulse-simple-binding = "2.28.1"
-tiny_http = "0.12"
 termios = "0.3"
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
 libc = "0.2"
 pico-args = "0.5"
 ctrlc = "3.4"
-gtk = { version = "0.18", features = ["v3_24"] }
-gio = "0.18"
-glib = "0.18"
+slint = "1.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[build-dependencies]
+slint-build = "1.9"

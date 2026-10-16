@@ -1,123 +1,127 @@
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
-use std::thread;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use anyhow::Result;
-use serialport;
 
-mod audio;
-mod rigctl;
-mod trusdx;
-mod cli;
-mod gui;
-mod shutdown;
+use anyhow::Result;
+use tracing::{info, warn};
+use tracing_subscriber::EnvFilter;
+
+use trusdx_linux_driver::audio;
+use trusdx_linux_driver::cli;
+use trusdx_linux_driver::gui;
+use trusdx_linux_driver::rigctl;
+use trusdx_linux_driver::serial_io;
+use trusdx_linux_driver::shutdown;
+use trusdx_linux_driver::state::AppState;
+use trusdx_linux_driver::trusdx;
 
 fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_target(false)
+        .init();
+
+    let args = cli::parse_args()?;
+
     audio::cleanup_trusdx_audio_interfaces();
 
-    let _mid = audio::create_trusdx_audio_interface(11520);
+    const AUDIO_TX_RATE: u32 = 11520;
+    const AUDIO_RX_RATE: u32 = 7812;
 
-    let mut port = trusdx::open_trusdx_serial()?;
-    
-    let _ = trusdx::control_rts(&mut *port, false);
-    let _ = trusdx::control_dtr(&mut *port, true);
+    if audio::create_trusdx_audio_interface(AUDIO_TX_RATE).is_none() {
+        warn!("failed to create TRUSDX PulseAudio null-sink");
+    }
+
+    let mut port = trusdx::open_trusdx_serial(args.device.as_deref())?;
+
+    if let Err(e) = trusdx::control_rts(&mut *port, false) {
+        warn!(error = %e, "RTS low failed");
+    }
+    if let Err(e) = trusdx::control_dtr(&mut *port, true) {
+        warn!(error = %e, "DTR high failed");
+    }
     let ser: Arc<Mutex<Box<dyn serialport::SerialPort + Send>>> = Arc::new(Mutex::new(port));
 
     {
-        let mut s = ser.lock().unwrap();
-        let _ = trusdx::enable_streaming_speaker_off(&mut **s);
-        let _ = trusdx::set_mode(&mut **s, 2);
+        let mut s = ser.lock().unwrap_or_else(|e| e.into_inner());
+        if let Err(e) = trusdx::enable_streaming_speaker_off(&mut **s) {
+            warn!(error = %e, "enable streaming failed");
+        }
+        if let Err(e) = trusdx::set_mode(&mut **s, 2) {
+            warn!(error = %e, "set mode USB failed");
+        }
     }
-    let streaming_started = Arc::new(AtomicBool::new(false));
+
+    let state = AppState::new();
+
+    // Legacy pre-bridge wait (left in place by design).
     {
         let mut attempts = 0;
         loop {
             let start = std::time::Instant::now();
-            while !streaming_started.load(Ordering::Relaxed) && start.elapsed() < Duration::from_millis(250) {
-                thread::sleep(Duration::from_millis(10));
+            while !state.streaming_started.load(std::sync::atomic::Ordering::Relaxed)
+                && start.elapsed() < Duration::from_millis(250)
+            {
+                std::thread::sleep(Duration::from_millis(10));
             }
-            // Check if streaming started successfully
-            if streaming_started.load(Ordering::Relaxed) { break; }
-            // Check if maximum retry attempts reached
-            if attempts >= 2 { break; }
+            if state
+                .streaming_started
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                break;
+            }
+            if attempts >= 2 {
+                break;
+            }
             attempts += 1;
-            // Check if serial port lock acquired successfully
             if let Ok(mut s) = ser.lock() {
                 let _ = trusdx::enable_streaming_speaker_off(&mut **s);
             }
         }
     }
 
-    let freq_state = Arc::new(Mutex::new(0u64));
-    let tx_state = Arc::new(Mutex::new(false));
-    let mode_state = Arc::new(Mutex::new(String::from("USB")));
-    let audio = audio::setup_pulseaudio(7812, 11520)?;
-    let stop_audio = Arc::new(Mutex::new(false));
-    let input_level = Arc::new(Mutex::new(0.0f32));
-    let output_level = Arc::new(Mutex::new(0.0f32));
-    let cat_queue: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
-    audio::run_audio_bridge(
-        ser.clone(),
-        audio,
-        stop_audio.clone(),
-        input_level.clone(),
-        output_level.clone(),
-        freq_state.clone(),
-        mode_state.clone(),
-        tx_state.clone(),
-        cat_queue.clone(),
-        streaming_started.clone(),
-    );
+    let audio_handles = audio::setup_pulseaudio(AUDIO_RX_RATE, AUDIO_TX_RATE)?;
+    let audio_thread = audio::run_audio_bridge(ser.clone(), audio_handles, state.clone());
+    let _status_poller = serial_io::spawn_status_poller(state.clone());
 
-    rigctl::spawn_rigctl_server(ser.clone(), freq_state.clone(), tx_state.clone(), cat_queue.clone());
+    rigctl::spawn_rigctl_server(ser.clone(), state.clone());
 
-    let shutting_down = Arc::new(AtomicBool::new(false));
-    cli::spawn_esc_handler(shutting_down.clone(), ser.clone(), stop_audio.clone());
-
-    gui::spawn_gui(
-        input_level.clone(),
-        output_level.clone(),
-        shutting_down.clone(),
-        ser.clone(),
-        stop_audio.clone(),
-        freq_state.clone(),
-        mode_state.clone(),
-        tx_state.clone(),
-    );
-
-    cli::print_console_header();
-    let mut last_poll = std::time::Instant::now();
-    let mut prev_tx_state = false;
-    let mut last_tx_end = std::time::Instant::now() - std::time::Duration::from_secs(5);
-    
-    loop {
-        // Check if shutdown flag is set
-        if shutting_down.load(Ordering::Relaxed) { break; }
-        let in_lvl = *input_level.lock().unwrap();
-        let out_lvl = *output_level.lock().unwrap();
-        let freq = *freq_state.lock().unwrap();
-        let mode = mode_state.lock().unwrap().clone();
-        let tx_now = *tx_state.lock().unwrap();
-        // Check if TX just ended (transition from TX to RX)
-        if prev_tx_state && !tx_now { last_tx_end = std::time::Instant::now(); }
-        prev_tx_state = tx_now;
-        cli::render_levels(in_lvl, out_lvl, freq, &mode, tx_now);
-        thread::sleep(Duration::from_millis(10));
-        // Check if in RX mode and poll interval elapsed
-        if !tx_now && last_poll.elapsed() >= Duration::from_secs(2) {
-            // Check if enough time passed since last TX ended
-            if std::time::Instant::now().duration_since(last_tx_end) >= Duration::from_millis(500) {
-                // Check if serial port lock acquired successfully
-                if let Ok(mut s) = ser.lock() { let _ = trusdx::query_vfo_a(&mut **s); }
-            }
-            last_poll = std::time::Instant::now();
+    {
+        let state_c = state.clone();
+        let ser_c = ser.clone();
+        if let Err(e) = ctrlc::set_handler(move || {
+            shutdown::shutdown(state_c.clone(), ser_c.clone());
+        }) {
+            warn!(error = %e, "could not install Ctrl-C handler");
         }
     }
 
-    
+    cli::spawn_esc_handler(state.clone(), ser.clone());
+
+    if args.no_gui {
+        info!("starting CLI-only meters (--no-gui)");
+        cli::run_meter_loop(state.clone());
+    } else {
+        // GUI/tray mode: do not run CLI meters — relative/absolute redraw fights
+        // tracing/debug output and garbles the terminal.
+        match gui::run_gui(state.clone(), ser.clone()) {
+            Ok(()) => {}
+            Err(e) => {
+                warn!(error = %e, "GUI unavailable; falling back to CLI meters");
+                cli::run_meter_loop(state.clone());
+            }
+        }
+    }
+
+    state
+        .stop_audio
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = audio_thread.join();
+
     print!("\x1B[2J\x1B[H");
     std::io::Write::flush(&mut std::io::stdout()).ok();
     audio::cleanup_trusdx_audio_interfaces();
+    info!("shutdown complete");
     Ok(())
 }
-
-
