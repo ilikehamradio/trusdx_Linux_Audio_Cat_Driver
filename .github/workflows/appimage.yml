@@ -98,11 +98,35 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: trusdx_driver-${{ steps.meta.outputs.version }}-x86_64
+          name: trusdx-${{ steps.meta.outputs.version }}-x86_64
           path: |
-            dist/trusdx_driver-x86_64.AppImage
-            dist/trusdx_driver-x86_64.AppImage.zsync
+            dist/trusdx-x86_64.AppImage
+            dist/trusdx-x86_64.AppImage.zsync
           if-no-files-found: error
+
+      # softprops only overwrites same filenames; old renames otherwise pile up on
+      # the rolling "continuous" release (trusdx_driver / trusdx_linux_driver-*).
+      - name: Prune obsolete AppImage assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          KEEP='^(trusdx-x86_64\.AppImage|trusdx-x86_64\.AppImage\.zsync)$'
+          if ! gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .id >/dev/null 2>&1; then
+            echo "No existing release for tag ${TAG}; nothing to prune."
+            exit 0
+          fi
+          while read -r id name; do
+            [[ -z "${id}" ]] && continue
+            if [[ ! "${name}" =~ ${KEEP} ]]; then
+              echo "Deleting obsolete asset: ${name} (id=${id})"
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${id}"
+            fi
+          done < <(
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+              --jq '.assets[] | select(.name | test("\\.AppImage")) | "\(.id) \(.name)"'
+          )
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -118,8 +142,8 @@ jobs:
             Gear Lever / AppImageUpdate channel: `${{ steps.meta.outputs.channel }}`
             Embedded update info uses `gh-releases-zsync` against this release's `.zsync` asset.
           files: |
-            dist/trusdx_driver-x86_64.AppImage
-            dist/trusdx_driver-x86_64.AppImage.zsync
+            dist/trusdx-x86_64.AppImage
+            dist/trusdx-x86_64.AppImage.zsync
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

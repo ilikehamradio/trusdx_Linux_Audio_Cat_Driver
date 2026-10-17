@@ -7,7 +7,7 @@ cd "$ROOT"
 
 ARCH="${ARCH:-x86_64}"
 APP_NAME="trusdx_linux_driver"
-APP_SHORT="trusdx_driver"
+APP_SHORT="trusdx"
 REPO="${GITHUB_REPOSITORY:-ilikehamradio/trusdx_Linux_Audio_Cat_Driver}"
 REPO_OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
