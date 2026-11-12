@@ -123,8 +123,8 @@ The AppImage will be generated in `target/appimage/`.
 
 ## Technical Details
 
-- **Audio Format**: RX ~7812 Hz (f32 Pulse playback), TX 11520 Hz (s16 record → 8-bit CAT stream)
-- **Pulse null-sink**: Created at the TX rate (`rate=11520`) as `TRUSDX` / `TRUSDX.monitor`
+- **Audio Format**: RX ~7812 Hz (f32 Pulse playback), TX 10472 Hz (s16 record → 8-bit CAT stream); serial 115200 8N2 so the link paces TX bytes evenly with ~9% headroom
+- **Pulse null-sink**: Created at the TX rate (`rate=10472`) as `TRUSDX` / `TRUSDX.monitor`
 - **Serial Protocol**: CAT commands over USB serial (CH340 1a86:7523, or `--device`)
 - **rigctl Port**: 127.0.0.1:4532
 - **Threading**: Audio bridge drains outbound serial control; a status poller sends `;FA;`/`;MD;` (leading `;` interrupts US audio) at launch and every ~2s in RX; Slint GUI runs on the main thread when enabled

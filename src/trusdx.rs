@@ -6,6 +6,23 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 const CMD_RX: &[u8] = b";RX;";
+const CMD_UA2_INTERRUPT: &[u8] = b";UA2;";
+
+/// Serial link rate to the radio.
+pub const SERIAL_BAUD: u32 = 115_200;
+
+/// TX audio sample rate. The radio plays each CAT audio byte the moment it
+/// arrives, so the sample rate must equal the byte rate on the wire. With 8N2
+/// framing (11 bits/byte) the link itself paces bytes at 115200/11 ≈ 10473 B/s,
+/// leaving the radio ~9% idle time per byte. The old 11520 S/s at 8N1 used
+/// 100% of the link: on long (FT8-length) transmissions the radio dropped
+/// bytes, including the un-key `;RX;`, and stayed keyed (issue #2).
+pub const TX_AUDIO_RATE: u32 = SERIAL_BAUD / 11;
+
+/// Quiet gap after the last TX audio byte has left the port, before `;RX;`.
+const UNKEY_QUIET: Duration = Duration::from_millis(200);
+/// Gap between `;RX;` and `;UA2;` during un-key.
+const UNKEY_UA_DELAY: Duration = Duration::from_millis(100);
 const CMD_TX0: &[u8] = b";TX0;";
 
 // Leading ';' interrupts an in-flight US audio stream (trUSDX CAT framing).
@@ -85,11 +102,12 @@ pub fn open_trusdx_serial(
         None => find_trusdx_device()
             .ok_or_else(|| anyhow::anyhow!("No CH340 device found (pass --device /dev/ttyUSBN)"))?,
     };
-    let port = serialport::new(&serial_device, 115200)
+    let port = serialport::new(&serial_device, SERIAL_BAUD)
         .timeout(Duration::from_millis(10))
         .parity(serialport::Parity::None)
         .data_bits(serialport::DataBits::Eight)
-        .stop_bits(serialport::StopBits::One)
+        // Two stop bits pace TX audio bytes evenly (see TX_AUDIO_RATE).
+        .stop_bits(serialport::StopBits::Two)
         .flow_control(serialport::FlowControl::None)
         .open()
         .map_err(|e| anyhow::anyhow!("Failed to open {}: {}", serial_device, e))?;
@@ -156,6 +174,20 @@ fn send_rx_ua(s: &mut dyn SerialPort, ua: &[u8]) -> std::io::Result<()> {
     result
 }
 
+/// Un-key after TX audio: wait for queued audio to leave the port, 200 ms of
+/// quiet, `;RX;`, 100 ms, `;UA2;` (re-enables RX audio streaming). Sending
+/// `RX;` right behind the audio is often ignored by firmware 2.00x.
+///
+/// RTS stays low throughout (RTS high may key PTT on the (tr)uSDX).
+pub fn stop_transmit(s: &mut dyn SerialPort) -> std::io::Result<()> {
+    let _ = flush_serial_line(s);
+    std::thread::sleep(UNKEY_QUIET);
+    let rx = send_command_to_radio(s, CMD_RX);
+    std::thread::sleep(UNKEY_UA_DELAY);
+    let ua = send_command_to_radio(s, CMD_UA2_INTERRUPT);
+    rx.and(ua)
+}
+
 pub fn enable_streaming_speaker_off(s: &mut dyn SerialPort) -> std::io::Result<()> {
     send_rx_ua(s, CMD_UA2)
 }
@@ -213,5 +245,18 @@ mod tests {
         // Arrange / Act / Assert — trUSDX ends US audio at ';' from the host.
         assert_eq!(CMD_FA_QUERY, b";FA;");
         assert_eq!(CMD_MD_QUERY, b";MD;");
+    }
+
+    #[test]
+    fn tx_audio_rate_matches_8n2_byte_rate() {
+        // 1 start + 8 data + 2 stop bits per sample byte.
+        assert_eq!(TX_AUDIO_RATE, 10_472);
+        assert!(TX_AUDIO_RATE * 11 <= SERIAL_BAUD);
+    }
+
+    #[test]
+    fn unkey_commands_lead_with_semicolon() {
+        assert_eq!(CMD_RX, b";RX;");
+        assert_eq!(CMD_UA2_INTERRUPT, b";UA2;");
     }
 }

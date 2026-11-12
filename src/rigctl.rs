@@ -243,10 +243,12 @@ fn apply_serial_op(
         RigctlSerialOp::SetPtt(on) => {
             // Original behavior: PTT hits the port immediately, not via the CAT queue.
             if let Ok(mut s) = ser.lock() {
+                // Un-key holds the port for ~300 ms (drain, quiet, ;RX;, ;UA2;) so
+                // no TX audio chunk can slip in after ;RX; (issue #2).
                 let result = if on {
                     trusdx::start_transmit_baseband(&mut **s)
                 } else {
-                    trusdx::enable_streaming_speaker_off(&mut **s)
+                    trusdx::stop_transmit(&mut **s)
                 };
                 if let Err(e) = result {
                     warn!(error = %e, on, "rigctl: PTT serial command failed");

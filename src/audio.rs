@@ -20,9 +20,10 @@ use crate::cat_codec::{
 use crate::serial_io::{self, SerialRxDemux};
 use crate::state::AppState;
 
-const TX_FALLING_DELAY_MS: u64 = 30;
-const STREAMING_TIMEOUT_MS: u64 = 200;
-const STREAMING_RETRY_TIMEOUT_MS: u64 = 100;
+/// After TX→RX, how long to wait for RX audio (`US`) before re-sending the
+/// un-key. Covers rigctl's ~300 ms un-key sequence plus radio settle time.
+const STREAMING_TIMEOUT_MS: u64 = 1500;
+const STREAMING_RETRY_TIMEOUT_MS: u64 = 500;
 const POLL_INTERVAL_MS: u64 = 5;
 const DRAIN_ATTEMPTS: usize = 10;
 /// Display gain for RX meter (RMS). Kept modest so normal RX does not peg ~70%+.
@@ -214,6 +215,8 @@ fn process_and_write_wave(
 fn wait_for_streaming(state: &AppState, timeout_ms: u64) {
     let start = std::time::Instant::now();
     while !state.streaming_started.load(Ordering::Relaxed)
+        && !state.tx.load(Ordering::Relaxed)
+        && !state.stop_audio.load(Ordering::Relaxed)
         && start.elapsed() < Duration::from_millis(timeout_ms)
     {
         thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
@@ -264,27 +267,24 @@ pub fn run_audio_bridge(
                 }
             }
 
-            // Entering RX: reset demux and ask the radio to start US streaming again.
+            // Entering RX: rigctl already sent the un-key sequence (;RX; ;UA2;).
+            // Reset demux and wait for RX audio; if it never returns the radio
+            // may still be keyed, so send the un-key once more.
             if starting_rx {
                 demux.reset();
                 state.streaming_started.store(false, Ordering::Relaxed);
 
-                thread::sleep(Duration::from_millis(TX_FALLING_DELAY_MS));
-
-                if let Ok(mut serial_port) = ser.lock() {
-                    if let Err(e) =
-                        crate::trusdx::enable_streaming_speaker_off(&mut **serial_port)
-                    {
-                        warn!(error = %e, "enable streaming failed");
-                    }
-                }
-
                 wait_for_streaming(&state, STREAMING_TIMEOUT_MS);
 
-                // Retry once if we never saw a US opener.
-                if !state.streaming_started.load(Ordering::Relaxed) {
+                if !state.streaming_started.load(Ordering::Relaxed)
+                    && !state.tx.load(Ordering::Relaxed)
+                    && !state.stop_audio.load(Ordering::Relaxed)
+                {
+                    warn!("no RX audio after un-key; re-sending ;RX; ;UA2;");
                     if let Ok(mut serial_port) = ser.lock() {
-                        let _ = crate::trusdx::enable_streaming_speaker_off(&mut **serial_port);
+                        if let Err(e) = crate::trusdx::stop_transmit(&mut **serial_port) {
+                            warn!(error = %e, "un-key retry failed");
+                        }
                     }
                     wait_for_streaming(&state, STREAMING_RETRY_TIMEOUT_MS);
                 }
@@ -309,8 +309,15 @@ pub fn run_audio_bridge(
                         encode_tx_samples(&tx_i16_buf, TX_GAIN, &mut u8_buf);
 
                         if let Ok(mut serial_port) = ser.lock() {
-                            let _ =
-                                crate::trusdx::send_audio_stream_raw(&mut **serial_port, &u8_buf);
+                            // Re-check under the lock: if PTT dropped while we
+                            // read Pulse, the un-key may already be on the wire
+                            // and audio after ;RX; would be parsed as CAT.
+                            if state.tx.load(Ordering::Relaxed) {
+                                let _ = crate::trusdx::send_audio_stream_raw(
+                                    &mut **serial_port,
+                                    &u8_buf,
+                                );
+                            }
                         }
                     }
                     Err(_) => {

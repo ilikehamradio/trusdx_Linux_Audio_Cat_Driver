@@ -26,7 +26,7 @@ fn main() -> Result<()> {
 
     audio::cleanup_trusdx_audio_interfaces();
 
-    const AUDIO_TX_RATE: u32 = 11520;
+    const AUDIO_TX_RATE: u32 = trusdx::TX_AUDIO_RATE;
     const AUDIO_RX_RATE: u32 = 7812;
 
     if audio::create_trusdx_audio_interface(AUDIO_TX_RATE).is_none() {
